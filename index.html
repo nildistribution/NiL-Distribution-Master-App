@@ -8,6 +8,9 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js">
     </script>
+    <!-- Google Identity Services (OAuth) -->
+    <script src="https://accounts.google.com/gsi/client">
+    </script>
     <style>
         /* ===== রুট ভেরিয়েবল ===== */
         :root {
@@ -4716,7 +4719,7 @@
         }
 
         // ================================================================
-        // ২৬. সেটিংস (Settings) – সম্পূর্ণ
+        // ২৬. সেটিংস (Settings) – সম্পূর্ণ (Google Drive + GitHub যুক্ত)
         // ================================================================
 
         function renderSettings() {
@@ -4748,6 +4751,22 @@
                     <input type="file" id="importFileSettings" style="display:none;" accept=".json" onchange="importAllData(this.files[0])">
                     <button class="btn btn-danger btn-sm col" onclick="clearAllEntries()"><i class="fas fa-eraser"></i> ডাটা ক্লিন</button>
                   </div>
+                  <div class="row mt-4">
+                    <div class="col">
+                      <button class="btn btn-primary btn-sm" onclick="googleDriveBackup()" style="width:100%;"><i class="fab fa-google-drive"></i> Google Drive ব্যাকআপ</button>
+                    </div>
+                    <div class="col">
+                      <button class="btn btn-warning btn-sm" onclick="googleDriveRestore()" style="width:100%;"><i class="fab fa-google-drive"></i> Google Drive রিস্টোর</button>
+                    </div>
+                  </div>
+                  <div class="row mt-2">
+                    <div class="col">
+                      <button class="btn btn-success btn-sm" onclick="githubBackup()" style="width:100%;"><i class="fab fa-github"></i> GitHub ব্যাকআপ</button>
+                    </div>
+                    <div class="col">
+                      <button class="btn btn-info btn-sm" onclick="githubRestore()" style="width:100%;"><i class="fab fa-github"></i> GitHub রিস্টোর</button>
+                    </div>
+                  </div>
                   <button class="btn btn-primary mt-4" style="width:100%;" onclick="saveSettings()"><i class="fas fa-save"></i> সংরক্ষণ</button>
                 </div>
               `;
@@ -4767,7 +4786,7 @@
         }
 
         // ================================================================
-        // ২৭. ডাটা ব্যাকআপ ও ইম্পোর্ট
+        // ২৭. ডাটা ব্যাকআপ ও ইম্পোর্ট (স্থানীয়)
         // ================================================================
 
         function exportAllData() {
@@ -5018,7 +5037,320 @@
         function setDefaultDailyRate(val) {}
 
         // ================================================================
-        // ৩০. অ্যাপ স্টার্টআপ
+        // ৩০. Google Drive ব্যাকআপ ও রিস্টোর
+        // ================================================================
+
+        const GOOGLE_CLIENT_ID = '289707178123-6qd7ji22bjpbsgfq6uf1jar36uisg8m2.apps.googleusercontent.com';
+        const GOOGLE_FOLDER_ID = '11M_lSWAhlLJIC8dbBQE29ZDXqoHnHJqQ';
+        const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/drive.file';
+        let gapiInited = false;
+
+        function loadGapiClient() {
+            return new Promise((resolve) => {
+                if (gapiInited) {
+                    resolve();
+                    return;
+                }
+                const script = document.createElement('script');
+                script.src = 'https://apis.google.com/js/api.js';
+                script.onload = () => {
+                    gapi.load('client:auth2', () => {
+                        gapi.client.init({
+                            clientId: GOOGLE_CLIENT_ID,
+                            scope: GOOGLE_SCOPES,
+                            discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest']
+                        }).then(() => {
+                            gapiInited = true;
+                            resolve();
+                        }).catch(err => {
+                            showToast('Google Drive API init failed: ' + err.message, 'danger');
+                            resolve();
+                        });
+                    });
+                };
+                script.onerror = () => {
+                    showToast('Google API লোড করা যায়নি', 'danger');
+                    resolve();
+                };
+                document.head.appendChild(script);
+            });
+        }
+
+        async function googleDriveBackup() {
+            await loadGapiClient();
+            if (!gapiInited) {
+                showToast('Google Drive API ইনিশিয়ালাইজ হয়নি', 'danger');
+                return;
+            }
+            try {
+                const auth = gapi.auth2.getAuthInstance();
+                if (!auth.isSignedIn.get()) {
+                    await auth.signIn();
+                }
+                const fullData = {
+                    products,
+                    routes,
+                    routeNames,
+                    currentOrders,
+                    offers,
+                    packageOffers,
+                    productOffers,
+                    targets,
+                    deliveryData,
+                    deliveryManagers,
+                    deliveryManagerDetails,
+                    damageLog,
+                    deliverySchedule,
+                    printSettings,
+                    users,
+                    stockLog,
+                    incentiveSettings,
+                    invoiceCounter,
+                    debts,
+                    version: 1.0
+                };
+                const jsonStr = JSON.stringify(fullData, null, 2);
+                const blob = new Blob([jsonStr], { type: 'application/json' });
+                const metadata = {
+                    name: `neel_backup_${new Date().toISOString().split('T')[0]}.json`,
+                    parents: [GOOGLE_FOLDER_ID]
+                };
+                const form = new FormData();
+                form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+                form.append('file', blob);
+
+                const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + gapi.auth2.getAuthInstance().currentUser.get().getAuthResponse()
+                            .access_token
+                    },
+                    body: form
+                });
+                const result = await response.json();
+                if (result.id) {
+                    showToast('✅ Google Drive ব্যাকআপ সম্পন্ন! ফাইল ID: ' + result.id, 'success');
+                } else {
+                    showToast('Google Drive আপলোড ব্যর্থ: ' + (result.error?.message || 'অজানা ত্রুটি'), 'danger');
+                }
+            } catch (err) {
+                showToast('Google Drive ব্যাকআপ ত্রুটি: ' + err.message, 'danger');
+            }
+        }
+
+        async function googleDriveRestore() {
+            await loadGapiClient();
+            if (!gapiInited) {
+                showToast('Google Drive API ইনিশিয়ালাইজ হয়নি', 'danger');
+                return;
+            }
+            try {
+                const auth = gapi.auth2.getAuthInstance();
+                if (!auth.isSignedIn.get()) {
+                    await auth.signIn();
+                }
+                // ফোল্ডার থেকে ফাইল লিস্ট
+                const response = await gapi.client.drive.files.list({
+                    q: `'${GOOGLE_FOLDER_ID}' in parents and mimeType='application/json' and trashed=false`,
+                    orderBy: 'createdTime desc',
+                    pageSize: 10,
+                    fields: 'files(id, name, createdTime)'
+                });
+                const files = response.result.files;
+                if (!files || files.length === 0) {
+                    showToast('Google Drive ফোল্ডারে কোনো ব্যাকআপ ফাইল নেই', 'warning');
+                    return;
+                }
+                // ব্যবহারকারীকে ফাইল নির্বাচন করতে দিন
+                let fileListHtml = files.map((f, idx) =>
+                    `<button class="btn btn-sm btn-outline" style="margin:4px;width:100%;text-align:left;" onclick="downloadGoogleDriveFile('${f.id}')">📄 ${f.name} (${new Date(f.createdTime).toLocaleDateString('bn-BD')})</button>`
+                ).join('');
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay';
+                modal.id = 'gdriveRestoreModal';
+                modal.innerHTML = `
+                    <div class="modal">
+                      <div class="modal-header gradient"><h3>📥 Google Drive থেকে রিস্টোর</h3><button class="modal-close" onclick="document.getElementById('gdriveRestoreModal').remove()">✕</button></div>
+                      <div class="modal-body">
+                        <p>নিচের ব্যাকআপ ফাইলগুলোর একটি নির্বাচন করুন:</p>
+                        ${fileListHtml}
+                      </div>
+                    </div>
+                  `;
+                document.body.appendChild(modal);
+                modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+            } catch (err) {
+                showToast('Google Drive রিস্টোর ত্রুটি: ' + err.message, 'danger');
+            }
+        }
+
+        async function downloadGoogleDriveFile(fileId) {
+            try {
+                const auth = gapi.auth2.getAuthInstance();
+                const response = await gapi.client.drive.files.get({
+                    fileId: fileId,
+                    alt: 'media'
+                });
+                const data = response.result;
+                if (typeof data === 'string') {
+                    const parsed = JSON.parse(data);
+                    applyRestoredData(parsed);
+                } else {
+                    showToast('ফাইল ডাটা সঠিক নয়', 'danger');
+                }
+                document.getElementById('gdriveRestoreModal')?.remove();
+            } catch (err) {
+                showToast('ফাইল ডাউনলোড ব্যর্থ: ' + err.message, 'danger');
+            }
+        }
+
+        function applyRestoredData(data) {
+            if (data.products) products = data.products;
+            if (data.routes) routes = data.routes;
+            if (data.routeNames) routeNames = data.routeNames;
+            if (data.currentOrders) currentOrders = data.currentOrders;
+            if (data.offers) offers = data.offers;
+            if (data.packageOffers) packageOffers = data.packageOffers;
+            if (data.productOffers) productOffers = data.productOffers;
+            if (data.targets) targets = data.targets;
+            if (data.deliveryData) deliveryData = data.deliveryData;
+            if (data.deliveryManagers) deliveryManagers = data.deliveryManagers;
+            if (data.deliveryManagerDetails) deliveryManagerDetails = data.deliveryManagerDetails;
+            if (data.damageLog) damageLog = data.damageLog;
+            if (data.deliverySchedule) deliverySchedule = data.deliverySchedule;
+            if (data.printSettings) printSettings = data.printSettings;
+            if (data.users) users = data.users;
+            if (data.stockLog) stockLog = data.stockLog;
+            if (data.incentiveSettings) incentiveSettings = data.incentiveSettings;
+            if (data.invoiceCounter) invoiceCounter = data.invoiceCounter;
+            if (data.debts) debts = data.debts;
+            if (currentUser) {
+                const found = users.find(u => u.username === currentUser.username);
+                if (found) currentUser = found;
+                else {
+                    currentUser = null;
+                    localStorage.removeItem('fu');
+                }
+            }
+            saveAll();
+            showToast('✅ Google Drive থেকে ডাটা রিস্টোর সম্পন্ন!', 'success');
+            location.reload();
+        }
+
+        // ================================================================
+        // ৩১. GitHub ব্যাকআপ ও রিস্টোর
+        // ================================================================
+
+        const GITHUB_REPO_OWNER = 'nildistribution';
+        const GITHUB_REPO_NAME = 'NiL-Distribution-Master-App';
+        const GITHUB_BACKUP_PATH = 'backup/neel_backup.json';
+
+        function getGitHubToken() {
+            let token = localStorage.getItem('github_token');
+            if (!token) {
+                token = prompt('GitHub Personal Access Token লিখুন:\n(প্রয়োজনীয় scope: repo)');
+                if (token) {
+                    localStorage.setItem('github_token', token);
+                } else {
+                    showToast('GitHub Token আবশ্যক', 'warning');
+                    return null;
+                }
+            }
+            return token;
+        }
+
+        async function githubBackup() {
+            const token = getGitHubToken();
+            if (!token) return;
+            const fullData = {
+                products,
+                routes,
+                routeNames,
+                currentOrders,
+                offers,
+                packageOffers,
+                productOffers,
+                targets,
+                deliveryData,
+                deliveryManagers,
+                deliveryManagerDetails,
+                damageLog,
+                deliverySchedule,
+                printSettings,
+                users,
+                stockLog,
+                incentiveSettings,
+                invoiceCounter,
+                debts,
+                version: 1.0
+            };
+            const jsonStr = JSON.stringify(fullData, null, 2);
+            const content = btoa(unescape(encodeURIComponent(jsonStr)));
+
+            try {
+                // প্রথমে ফাইল আছে কিনা দেখি
+                let sha = '';
+                try {
+                    const getResp = await fetch(
+                        `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/contents/${GITHUB_BACKUP_PATH}`,
+                        { headers: { 'Authorization': `token ${token}` } }
+                    );
+                    if (getResp.ok) {
+                        const data = await getResp.json();
+                        sha = data.sha;
+                    }
+                } catch (e) {}
+
+                const putResp = await fetch(
+                    `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/contents/${GITHUB_BACKUP_PATH}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `token ${token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            message: `Neel Backup ${new Date().toISOString().split('T')[0]}`,
+                            content: content,
+                            sha: sha || undefined
+                        })
+                    }
+                );
+                if (putResp.ok) {
+                    showToast('✅ GitHub ব্যাকআপ সম্পন্ন!', 'success');
+                } else {
+                    const err = await putResp.json();
+                    showToast('GitHub আপলোড ব্যর্থ: ' + (err.message || 'অজানা ত্রুটি'), 'danger');
+                }
+            } catch (err) {
+                showToast('GitHub ব্যাকআপ ত্রুটি: ' + err.message, 'danger');
+            }
+        }
+
+        async function githubRestore() {
+            const token = getGitHubToken();
+            if (!token) return;
+            try {
+                const resp = await fetch(
+                    `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/contents/${GITHUB_BACKUP_PATH}`, {
+                        headers: { 'Authorization': `token ${token}` }
+                    }
+                );
+                if (!resp.ok) {
+                    showToast('GitHub এ কোনো ব্যাকআপ ফাইল নেই', 'warning');
+                    return;
+                }
+                const data = await resp.json();
+                const content = atob(data.content);
+                const parsed = JSON.parse(content);
+                applyRestoredData(parsed);
+                showToast('✅ GitHub থেকে ডাটা রিস্টোর সম্পন্ন!', 'success');
+            } catch (err) {
+                showToast('GitHub রিস্টোর ত্রুটি: ' + err.message, 'danger');
+            }
+        }
+
+        // ================================================================
+        // ৩২. অ্যাপ স্টার্টআপ
         // ================================================================
 
         if (!currentUser) {
